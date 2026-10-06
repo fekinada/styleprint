@@ -11,19 +11,25 @@ The project deliberately focuses on **text generation**. Audio is used only as t
 ## Pipeline
 
 ```
-REFERENCE AUDIO                       styleprint corpus
+REFERENCE AUDIO (files, folders, URLs)
        │
-Speech-to-text → cleaned transcript   styleprint transcribe
+Speech-to-text (Whisper, language detected) → utterances
        │
-       ├── linguistic analysis       styleprint analyze
-       │   (vocabulary, sentence length, syntax,
-       │   discourse markers, rhetorical devices, structure)
-       └── audio analysis (speech rate, pauses, emphasis, pitch)
+       ├── linguistic analysis: vocabulary, rhythm, syntax,
+       │   discourse markers, register
+       ├── rhetorical analysis (LLM): anecdotes, objections,
+       │   reframing, questions…
+       └── audio analysis: speech rate, pauses, emphasis,
+           pitch                                   (not implemented yet)
        │
-STYLE PROFILE → style examples / memory
+STYLE PROFILE → style card + real example passages
        │
-NEW USER INSTRUCTION → style-conditioned generation → GENERATED TEXT
+NEW INSTRUCTION → generation → critic → revision → GENERATED TEXT
 ```
+
+`styleprint learn` runs everything up to the style profile; `styleprint generate` runs the rest.
+
+Audio is used only for transcription today. Word timestamps are kept, and pauses split speech into utterances, but prosody (speech rate, pause patterns, emphasis, pitch) isn't measured or used for generation yet.
 
 ## Setup
 
@@ -169,14 +175,54 @@ Runs Whisper (`whisper-large-v3-turbo`) locally on Apple Silicon via `mlx-whispe
 styleprint analyze jane-doe
 ```
 
-Splits transcripts into utterances (at final punctuation or pauses over 0.5 s; see `utterances.jsonl`). It then writes `profile/linguistic.json` and a readable `profile/linguistic.md`:
+Measures *how* the speaker talks, with deterministic code: no LLM, so the same transcripts always give the same profile. It writes `profile/linguistic.json` (for the generator and the critic) and a readable `profile/linguistic.md`.
 
-- **Lexical:** lexical diversity (MATTR), pronouns, frequent lemmas, and words used unusually often or rarely compared with general usage (`wordfreq`). These are split into style words and topic words.
-- **Syntax:** utterance length, clauses, fragments, openings, questions and check-in tags, imperatives, passive voice.
-- **Discourse:** markers, transitions, hedging, intensifiers, contrast, audience framing, repairs, evaluative expressions, repetition, and signature phrases that recur across recordings.
-- **Register:** informal negation (*ne* dropping, *n't* contractions), preferred forms, how much the speaker addresses the listener, familiar vocabulary.
+### Utterances, not sentences
 
-Every feature includes verbatim examples. Language-specific resources live in `lexicons.py`, for French and English. They cover markers, familiar words, how informal negation looks (French drops *ne*, English contracts *n't*), preferred forms (*on/nous*, *ça/cela*, *vous/tu*; *yeah/yes*, *gonna/going to*, *it's/it is*), command detection and passive detection. Adding a language means adding one entry there and its spaCy model. The same `analyze()` runs on any text via `segment.utterances_from_text`, so generated text can be compared with the profile.
+Speech has no reliable sentences, and Whisper's punctuation is inconsistent. Transcripts are therefore split into **utterances**: a stretch of speech that ends at final punctuation (`.` `?` `!`) or at a pause longer than 0.5 s, measured with the word timestamps. In a long stretch with no punctuation, a shorter pause (0.2 s) also ends the utterance once it reaches 20 words. Utterances are saved in `utterances.jsonl`, and all syntax and discourse measures use them.
+
+### How to read the numbers
+
+- **Rates are per 1,000 words**, so styles learned from different amounts of audio can be compared.
+- **Compared with general usage.** Word rates are compared with the language's everyday frequency (from `wordfreq`). The profile shows what is *distinctive*, e.g. "*voilà* ×12", not just what is frequent: everyone says *le* and *the* a lot.
+- **Consistency across recordings.** Each marker records how many recordings it appears in. A habit found in every recording is style; one found in a single recording may come from that day's topic.
+- **Style vs. topic.** Distinctive words are split into function and discourse words (style, portable to any topic), adjectives (partly evaluation, partly topic) and content words (mostly topic, never used as style).
+- **Examples everywhere.** Every feature keeps a few verbatim utterances, spread across recordings, so each number can be checked against real speech.
+- **Absence.** Words the speaker never uses ("never says *du coup*") are only reported above about 2,000 words of speech. Below that, "never" just means "not seen yet".
+
+### What is measured
+
+| Group | Feature | What it captures |
+|---|---|---|
+| **Lexical** | Lexical diversity (MATTR) | How varied the vocabulary is, independent of corpus size |
+| | Pronouns | *I / you / we / one…* vs. general usage: talks about themself? addresses the listener? |
+| | Distinctive words | Words used far more (or less) than usual, split into style / adjectives / topic |
+| | Frequent lemmas | Favourite verbs, nouns, adjectives, adverbs |
+| **Syntax** | Utterance length | Median, spread, share of short (≤ 7 words) and long (≥ 13 words) utterances, and variation: punchy, flowing, or both |
+| | Clauses and subordination | How much is packed into one utterance |
+| | Fragments | Utterances with no verb: reactions, afterthoughts ("Wow.", "Ten minutes.", "Just one.") |
+| | Openings | Most common first words and word pairs ("so I", "alors on", "you know") |
+| | Questions | Share of questions, and check-in tags ("right?", "d'accord ?") |
+| | Commands | Imperatives addressed to the listener ("look", "regardez") |
+| | Passive voice | Approximate, from the parser |
+| **Discourse** | Markers | Words that glue speech together: *so, well, you know, I mean / voilà, bon, alors, du coup…* |
+| | Transitions, hedging, intensifiers, contrast | *then / ensuite*, *kind of / un peu*, *really / vraiment*, *but / mais*… |
+| | Audience framing | Talking to the listener: *you'll see, let me show you / vous allez voir, on va…* |
+| | Evaluative words | *amazing, perfect / magnifique, génial…* |
+| | Repetition | Emphatic doubling ("very very", "très très") vs. hesitation repeats |
+| | Signature phrases | 3–5 word sequences that recur across several recordings |
+| **Register** | Informal negation | French: dropping *ne* ("c'est pas"); English: contractions ("don't", "it's not") |
+| | Preferred forms | Strong preferences: *on/nous*, *ça/cela*, *vous/tu*; *yeah/yes*, *gonna/going to*, *it's/it is*, *you/one* |
+| | Addressing the listener | How often they speak *to* someone |
+| | Familiar vocabulary | *truc, super, ouais / stuff, gonna, yeah…* |
+
+### Languages
+
+Language-specific resources live in `lexicons.py`, for French and English: marker lists, familiar words, how informal negation looks, preferred-form pairs, and the rules for spotting commands and passive voice. Commands and passive voice need custom rules because spaCy's built-in tags miss most of them in transcribed speech. Adding a language means adding one entry there and installing its spaCy model.
+
+The same `analyze()` runs on any text (via `segment.utterances_from_text`). That's how the critic compares generated text with the speaker, and how `styleprint compare` scores any text file.
+
+**Limits.** Whisper removes most hesitations ("euh", "um"), so self-corrections are undercounted. Passive voice and commands are rule-based approximations; check the examples. Small corpora (under ~5,000 words) make rare features anecdotal; the report says how many examples each finding rests on.
 
 ## Rhetorical profile
 
@@ -184,7 +230,37 @@ Every feature includes verbatim examples. Language-specific resources live in `l
 styleprint rhetoric jane-doe      # needs `styleprint analyze` first
 ```
 
-An LLM annotates the utterances in passages of about 350 words. It looks for rhetorical questions, contrast, analogy, anecdote, emphatic repetition, lists, reframing, provocative openings, counterarguments, humor and appeals to authority. Each annotation must quote the transcript; quotes not found in the passage are discarded. Results go to `profile/rhetoric.json` and `profile/rhetoric.md`. Each passage is cached in `profile/rhetoric_cache/`, so an interrupted run resumes where it stopped.
+Captures *how the speaker persuades and engages*, which takes judgment rather than counting. An LLM reads the transcript and marks rhetorical devices, each backed by a verbatim quote.
+
+### Devices
+
+| Device | What the model looks for | Illustration |
+|---|---|---|
+| **Rhetorical question** | A question the speaker doesn't expect answered, or answers straight away | "Why does this matter? Because…" |
+| **Counterargument** | Voicing the listener's objection before they do, then answering it | "You're going to say you don't have time. I get it, but…" |
+| **Anecdote** | A personal memory or the story behind something | "When I was twenty, I thought…" |
+| **Reframing** | Correcting the usual idea: "not X, but Y", "the real X" | "Motivation isn't the point. Habits are." |
+| **Contrast** | Two options or situations set side by side | "Two schools: butter or olive oil." |
+| **Analogy** | An everyday comparison or image from another domain | "It's like learning to ride a bike." |
+| **List** | Three or more items, or a three-part rhythm | "Cheap, quick, and good." |
+| **Emphatic repetition** | Repeating a word or phrase for emphasis | "Ten minutes. Just ten minutes." |
+| **Humor** | Jokes, teasing the audience or themself | |
+| **Authority** | Backing a point with their own experience or status | "I've done this for twenty years…" |
+| **Provocative opening** | A hook that grabs attention at the start | |
+
+### How it works
+
+1. **Passages.** Each recording's utterances are grouped into passages of about 350 words. The model also sees the few utterances just before each passage, for context, but only annotates the passage itself.
+2. **Annotation.** For each passage, the model returns a structured JSON list: device, utterance numbers, an exact quote, and a one-line explanation. The answer is requested as structured output with bounded lengths. Local servers such as llama.cpp enforce that shape while generating, which keeps a model from looping; with OpenAI it's guidance, and malformed answers are retried.
+3. **Verification.** Every quote is checked against the transcript; quotes the model invented or paraphrased are discarded. A quote shortened with "…" is accepted if each part is found, in order. The report says how many annotations were kept and discarded.
+4. **Aggregation.** Counts per device, rate per 1,000 words, how many recordings each appears in, and up to five examples spread across recordings → `profile/rhetoric.md` and `profile/rhetoric.json`.
+5. **Caching.** Each passage's result is saved in `profile/rhetoric_cache/`. Re-running only annotates new passages, and an interrupted run resumes where it stopped.
+
+### How it's used
+
+The style card lists the devices found in at least two recordings, each with a generic instruction ("Voice the listener's objection before they do, then answer it") and one of the speaker's own quotes as an example. The passages chosen as examples for generation favour those that contain several different devices.
+
+**Limits.** These are model judgments, not measurements. In our tests about one annotation in six was mislabelled (a self-correction labelled as reframing, a two-item enumeration labelled as a list). Treat the counts as rough and the quotes as the useful part. Rare devices (one or two occurrences) say little. Speed depends on the model: about a minute per passage on a local 27B model with thinking off, much faster on hosted APIs.
 
 The model is configured in `styleprint.toml` (see [LLM](#llm)).
 
