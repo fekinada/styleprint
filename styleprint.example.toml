@@ -1,0 +1,19 @@
+# Copy to styleprint.toml (git-ignored) and pick one of the two setups.
+
+[llm]
+# --- OpenAI -------------------------------------------------------------
+url = "https://api.openai.com"
+model = "gpt-4.1"
+# Name of the environment variable holding the key. Never put the key itself here.
+api_key_env = "OPENAI_API_KEY"
+
+# --- Local / self-hosted server (llama.cpp, vLLM, Ollama, LM Studio...) --
+# url = "http://localhost:8080"
+# model = ""            # empty: use whatever model the server serves
+# thinking = false      # Qwen3-style reasoning before answering: better, much slower
+# api_key_env = ""      # set if your server requires a key
+
+# --- Both ---------------------------------------------------------------
+# kind = "auto"         # "openai" | "local" | "auto" (detected from the url)
+# timeout_s = 1800
+# max_tokens = 4096

@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv
+.DS_Store
+.pytest_cache/
+.deepeval/
+
+# Recordings, transcripts, profiles and generated texts: personal data about real
+# people, often under copyright. Nothing in the corpus is versioned.
+corpus/
+
+# Drop zone for audio before it is learned
+inbox/
+
+# Local LLM settings (server address, model). Copy styleprint.example.toml to start.
+styleprint.toml
